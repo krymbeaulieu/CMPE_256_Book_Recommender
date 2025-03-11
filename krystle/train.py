@@ -99,14 +99,14 @@ def run_slopeOne(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
   return results
   
 def run_svd(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
-  algo = SVD()
+  algo = SVD(random_state=42)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
   results['Funk Matrix Factorization'] = scores
   return results
   
 def gen_fig_results(results,errordict):
 
-  for errortype in list(errordict.keys()):
+  for errortype in list(errordict.keys(),cv):
     tags = []
     scrs = []
     algo = []
@@ -126,28 +126,11 @@ def gen_fig_results(results,errordict):
     ax.set_ylim(int(min(minval)*10)/10.0,int(max(minval)*10+1)/10.0)
     ax.set_ylabel(errordict[errortype]['name'])
     ax.legend(title='Recommendation Algorithm')
-    fn = f"results_{errordict[errortype]['key']}.png"
+    fn = f"results_{errordict[errortype]['key']}_{cv}.png"
     plt.savefig(fn)
     print(f"results saved to {fn}")
 
-
-def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset", 
-                               rating_scale = (1, 10),
-                               use_explicit=True,
-                               cv=3,
-                               verbose=True,
-                               n_jobs=-1,k=10):
-  
-  # download dataset, load, merge data
-  user_rating_df = setup_dataset(ds)
-  print(f"using explicit rating {rating_scale}")
-  
-
-  print("collaborative filtering")
-  results = {}
-  errordict = {'RMSE':{'key':'test_rmse','name':'Root Mean Square Error'},
-               'MAE':{'key':'test_mae','name':'Mean Absolute Error'}}
- 
+def setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit):
   # reader for surprise module
   reader = Reader(rating_scale=rating_scale)
   # figure out what dataset to use
@@ -168,12 +151,32 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
       del user_rating_df
   else:
     raise NotImplementedError(f"dataset {ds} not implemented yet for collaborative filtering.")
+  return data, reader
+
+def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset", 
+                               rating_scale = (1, 10),
+                               use_explicit=True,
+                               cv=3,
+                               verbose=True,
+                               n_jobs=-1,k=10):
+  
+  # download dataset, load, merge data
+  user_rating_df = setup_dataset(ds)
+  print(f"using rating {rating_scale}")
+  data,reader = setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit)
+
+  print("collaborative filtering")
+  results = {}
+  errordict = {'RMSE':{'key':'test_rmse','name':'Root Mean Square Error'},
+               'MAE':{'key':'test_mae','name':'Mean Absolute Error'}}
+ 
+ 
 
  
   results = run_normal(results, errordict, data, cv, verbose,n_jobs)
-  # memory intensive sooooo commenting out
+
   # results = run_knn_user(results, errordict, data, cv, verbose, n_jobs, k)
-  # memory intensive sooooo commenting out
+
   # results = run_knn_item(results, errordict, data, cv, verbose, n_jobs, k)
 
   results = run_nmf(results, errordict, data, cv, verbose,n_jobs)
@@ -182,19 +185,56 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
 
   results = run_svd(results, errordict, data, cv, verbose,n_jobs)
   
-  gen_fig_results(results, errordict)
+  gen_fig_results(results, errordict, cv)
+
+def find_best(ds = "arashnic/book-recommendation-dataset", 
+                               rating_scale = (1, 10),
+                               use_explicit=True,
+                               cv=3,
+                               verbose=True,
+                               n_jobs=-1):
+  
+  # download dataset, load, merge data
+  user_rating_df = setup_dataset(ds)
+  print(f"using rating {rating_scale}")
+  data,reader = setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit)
+
+  print("grid search for SVD")
+  results = {}
+  errordict = {'RMSE':{'key':'test_rmse','name':'Root Mean Square Error'},
+               'MAE':{'key':'test_mae','name':'Mean Absolute Error'}}
+  
+  param_grid = {
+    
+    'n_factors': [70, 80, 90, 100, 110, 120, 130, 140, 150, 160], 
+    'n_epochs': [20,100], 
+    'reg_all': [.02,0.1],
+    'biased': [True,False],
+    'lr_all': [1e-3,.005]
+  }
+  print(f"grid search with {param_grid} for SVD")
+  gs = GridSearchCV(SVD, param_grid, measures=list(errordict.keys()), cv=cv,n_jobs=n_jobs)
+  gs.fit(data)
+  # best score
+  print(f"best score: {gs.best_score}")
+  
+  # combination of parameters that gave the best RMSE score
+  print(f'best params RMSE: {gs.best_params["rmse"]}')
+  print(f'best params MAE: {gs.best_params["mae"]}')
 
 if __name__ == "__main__":
-  #example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10
+  #example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10 --allow_install False
   args = parse_args()
   try:
       from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
       from surprise.model_selection import cross_validate
+      from surprise.model_selection.search import GridSearchCV
   except ModuleNotFoundError:
     if args.allow_install:
       install('surprise')
       from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
       from surprise.model_selection import cross_validate
+      from surprise.model_selection.search import GridSearchCV
     else:
       raise ModuleNotFoundError(f"cannot find surprise, please pip install surprise or turn on allow install and rerun (currently: {allow_install})")
   
@@ -206,5 +246,9 @@ if __name__ == "__main__":
         import kagglehub
       else:
         raise ModuleNotFoundError(f"cannot find kagglehub, please pip install kagglehub or turn on allow install and rerun (currently: {allow_install})")
-        
-  do_collaborative_filtering(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
+
+  print("find best")
+  find_best(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs)      
+  
+  # print("do collaborative filtering")
+  # do_collaborative_filtering(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
