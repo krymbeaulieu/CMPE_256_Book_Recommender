@@ -5,21 +5,17 @@ import pandas as pd
 from pathlib import Path
 import seaborn as sns
 import time
+import pip
 
-try:
-    from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
-    from surprise.model_selection import cross_validate
-except ModuleNotFoundError:
-  raise ModuleNotFoundError("cannot find surprise, please pip install surprise")
-
-try:
-    import kagglehub
-except ModuleNotFoundError:
-    raise ModuleNotFoundError("cannot find kagglehub, please pip install kagglehub")
+def install(package):
+    if hasattr(pip, 'main'):
+        pip.main(['install', package])
+    else:
+        pip._internal.main(['install', package])
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Parse command-line arguments with defaults.")
-
+    
     parser.add_argument("--ds", type=str, default="arashnic/book-recommendation-dataset",
                         help="kaggle Dataset path or identifier (default: arashnic/book-recommendation-dataset).")
     parser.add_argument("--rating_scale", type=int, nargs=2, default=(1, 10),
@@ -34,6 +30,8 @@ def parse_args():
                         help="Number of jobs to run in parallel (default: -1). -1 is all cpu, 1 is single threaded")
     parser.add_argument("--k", type=int, default=10,
                           help="k neighbors. surprise knn default is 40 but may hit memory issues so default is 10 now. (default: 10).")
+    parser.add_argument("--allow_install", type=bool, default=False,
+                        help="allow pip install (default: False).")
 
     return parser.parse_args()
   
@@ -71,7 +69,7 @@ def run_normal(results, errordict, data, cv=3, verbose=True,n_jobs=-1):
   return results
 
 def run_knn_user(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
-  print("\nKNNBasic: user-based collab filter predictor")
+  print(f"\nKNNBasic: user-based collab filter predictor, k = {k}")
   sim_options = {'name': 'cosine', 'user_based': True}
   algo = KNNBasic(k=k,verbose=verbose,sim_options=sim_options)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
@@ -79,7 +77,7 @@ def run_knn_user(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
   return results
 
 def run_knn_items(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
-  print("\nKNNBasic: item-based collab filter predictor")
+  print(f"\nKNNBasic: item-based collab filter predictor, k = {k}")
   sim_options = {'name': 'cosine', 'user_based': False}
   algo = KNNBasic(k=k,verbose=True,sim_options=sim_options)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
@@ -173,10 +171,10 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
 
  
   results = run_normal(results, errordict, data, cv, verbose,n_jobs)
-
-  results = run_knn_user(results, errordict, data, cv, verbose, n_jobs, k)
-
-  results = run_knn_item(results, errordict, data, cv, verbose, n_jobs, k)
+  # memory intensive sooooo commenting out
+  # results = run_knn_user(results, errordict, data, cv, verbose, n_jobs, k)
+  # memory intensive sooooo commenting out
+  # results = run_knn_item(results, errordict, data, cv, verbose, n_jobs, k)
 
   results = run_nmf(results, errordict, data, cv, verbose,n_jobs)
 
@@ -189,4 +187,24 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
 if __name__ == "__main__":
   #example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10
   args = parse_args()
+  try:
+      from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
+      from surprise.model_selection import cross_validate
+  except ModuleNotFoundError:
+    if args.allow_install:
+      install('surprise')
+      from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
+      from surprise.model_selection import cross_validate
+    else:
+      raise ModuleNotFoundError(f"cannot find surprise, please pip install surprise or turn on allow install and rerun (currently: {allow_install})")
+  
+  try:
+      import kagglehub
+  except ModuleNotFoundError:
+      if args.allow_install:
+        install('kagglehub')
+        import kagglehub
+      else:
+        raise ModuleNotFoundError(f"cannot find kagglehub, please pip install kagglehub or turn on allow install and rerun (currently: {allow_install})")
+        
   do_collaborative_filtering(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
