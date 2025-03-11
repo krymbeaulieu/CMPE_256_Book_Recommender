@@ -62,7 +62,77 @@ def setup_dataset(ds):
     return user_rating_df
   else:
     raise NotImplementedError(f"dataset handling for {ds} is not implemented yet.")
+
+def run_normal(results, errordict, data, cv=3, verbose=True,n_jobs=-1):
+  print("\nnormal predictor")
+  algo = NormalPredictor()
+  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
+  results['Random_baseline'] = scores
+  return results
+
+def run_knn_user(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
+  print("\nKNNBasic: user-based collab filter predictor")
+  sim_options = {'name': 'cosine', 'user_based': True}
+  algo = KNNBasic(k=k,verbose=verbose,sim_options=sim_options)
+  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
+  results['User-based Collaborative Filtering'] = scores
+  return results
+
+def run_knn_items(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
+  print("\nKNNBasic: item-based collab filter predictor")
+  sim_options = {'name': 'cosine', 'user_based': False}
+  algo = KNNBasic(k=k,verbose=True,sim_options=sim_options)
+  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
+  results['Item-based Collaborative Filtering'] = scores
+  return results
+
+def run_nmf(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
+  print("\nNMF predictor")
+  algo = NMF(random_state=0)
+  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
+  results['Non-negative Matrix Factorization'] = scores
+  return results
+
+def run_slopeOne(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
+  print("\nSlopeOne predictor")
+  algo = SlopeOne()
+  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
+  results['SlopeOne Collaborative Filtering'] = scores
+  return results
   
+def run_svd(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
+  algo = SVD()
+  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
+  results['Funk Matrix Factorization'] = scores
+  return results
+  
+def gen_fig_results(results,errordict):
+
+  for errortype in list(errordict.keys()):
+    tags = []
+    scrs = []
+    algo = []
+    
+    for k,(key,value) in enumerate(results.items()):
+        if key=='Random_baseline': continue
+        tags.append('Algorithm '+str(k))
+        algo.append(key)
+        scrs.append(value[errordict[errortype]['key']].mean())
+    bar_colors = ['tab:red','tab:blue','tab:purple','tab:green','tab:orange']*5
+    
+    fig, ax = plt.subplots()
+    ax.bar(tags, scrs, label=algo, color=bar_colors[:len(tags)])
+    ax.legend()
+    fig.set_size_inches(10,4)
+    minval = [x[errordict[errortype]['key']].mean() for x in results.values()][1:]
+    ax.set_ylim(int(min(minval)*10)/10.0,int(max(minval)*10+1)/10.0)
+    ax.set_ylabel(errordict[errortype]['name'])
+    ax.legend(title='Recommendation Algorithm')
+    fn = f"results_{errordict[errortype]['key']}.png"
+    plt.savefig(fn)
+    print(f"results saved to {fn}")
+
+
 def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset", 
                                rating_scale = (1, 10),
                                use_explicit=True,
@@ -102,33 +172,19 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
     raise NotImplementedError(f"dataset {ds} not implemented yet for collaborative filtering.")
 
  
+  results = run_normal(results, errordict, data, cv, verbose,n_jobs)
+
+  results = run_knn_user(results, errordict, data, cv, verbose, n_jobs, k)
+
+  results = run_knn_item(results, errordict, data, cv, verbose, n_jobs, k)
+
+  results = run_nmf(results, errordict, data, cv, verbose,n_jobs)
+
+  results = run_slopeOne(results, errordict, data, cv, verbose,n_jobs)
+
+  results = run_svd(results, errordict, data, cv, verbose,n_jobs)
   
-  print("normal predictor")
-  algo = NormalPredictor()
-  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
-  results['Random_baseline'] = scores
-  
-  print("KNNBasic: user-based collab filter")
-  sim_options = {'name': 'cosine', 'user_based': True}
-  algo = KNNBasic(k=k,verbose=True,sim_options=sim_options)
-  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
-  results['User-based Collaborative Filtering'] = scores
-  
-  print("KNNBasic: item-based collab filter")
-  sim_options = {'name': 'cosine', 'user_based': False}
-  algo = KNNBasic(k=k,verbose=True,sim_options=sim_options)
-  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
-  results['Item-based Collaborative Filtering'] = scores
-  
-  print("NMF")
-  algo = NMF(random_state=0)
-  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
-  results['Non-negative Matrix Factorization'] = scores
-  
-  print("SlopeOne")
-  algo = SlopeOne()
-  scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
-  results['SlopeOne Collaborative Filtering'] = scores
+  gen_fig_results(results, errordict)
 
 if __name__ == "__main__":
   #example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10
