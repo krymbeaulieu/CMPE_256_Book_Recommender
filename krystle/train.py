@@ -1,19 +1,42 @@
-try:
-    import kagglehub
-except ModuleNotFoundError:
-    raise ModuleNotFoundError("cannot find kagglehub, please pip install kagglehub")
-import pandas as pd
+import argparse
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from pathlib import Path
 import seaborn as sns
-import matplotlib.pyplot as plt
 import time
+
 try:
     from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
     from surprise.model_selection import cross_validate
 except ModuleNotFoundError:
   raise ModuleNotFoundError("cannot find surprise, please pip install surprise")
 
+try:
+    import kagglehub
+except ModuleNotFoundError:
+    raise ModuleNotFoundError("cannot find kagglehub, please pip install kagglehub")
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Parse command-line arguments with defaults.")
+
+    parser.add_argument("--ds", type=str, default="arashnic/book-recommendation-dataset",
+                        help="kaggle Dataset path or identifier (default: arashnic/book-recommendation-dataset).")
+    parser.add_argument("--rating_scale", type=int, nargs=2, default=(1, 10),
+                        help="Rating scale as a tuple (default: (1, 10)).")
+    parser.add_argument("--use_explicit", type=bool, default=True,
+                        help="Use explicit ratings (default: True). aka what is in rating scale")
+    parser.add_argument("--cv", type=int, default=3,
+                        help="Number of cross-validation folds (default: 3).")
+    parser.add_argument("--verbose", type=bool, default=True,
+                        help="Verbose output (default: True).")
+    parser.add_argument("--n_jobs", type=int, default=-1,
+                        help="Number of jobs to run in parallel (default: -1). -1 is all cpu, 1 is single threaded")
+    parser.add_argument("--k", type=int, default=10,
+                          help="k neighbors. surprise knn default is 40 but may hit memory issues so default is 10 now. (default: 10).")
+
+    return parser.parse_args()
+  
 # Download latest version
 
 def download_dataset(ds = "arashnic/book-recommendation-dataset"):
@@ -45,7 +68,7 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
                                use_explicit=True,
                                cv=3,
                                verbose=True,
-                               n_jobs=-1):
+                               n_jobs=-1,k=10):
   
   # download dataset, load, merge data
   user_rating_df = setup_dataset(ds)
@@ -86,12 +109,14 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
   results['Random_baseline'] = scores
   
   print("KNNBasic: user-based collab filter")
-  algo = KNNBasic(verbose=True)
+  sim_options = {'name': 'cosine', 'user_based': True}
+  algo = KNNBasic(k=k,verbose=True,sim_options=sim_options)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
   results['User-based Collaborative Filtering'] = scores
   
   print("KNNBasic: item-based collab filter")
-  algo = KNNBasic(verbose=True,sim_options={'user_based':False})
+  sim_options = {'name': 'cosine', 'user_based': False}
+  algo = KNNBasic(k=k,verbose=True,sim_options=sim_options)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
   results['Item-based Collaborative Filtering'] = scores
   
@@ -106,4 +131,6 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
   results['SlopeOne Collaborative Filtering'] = scores
 
 if __name__ == "__main__":
-  do_collaborative_filtering()
+  #example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10
+  args = parse_args()
+  do_collaborative_filtering(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
