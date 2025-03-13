@@ -1,0 +1,1 @@
+!python3 train.py --allow_install True --k 2 --cv 10 > out.txt

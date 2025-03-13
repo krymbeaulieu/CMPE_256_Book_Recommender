@@ -32,6 +32,7 @@ def parse_args():
                           help="k neighbors. surprise knn default is 40 but may hit memory issues so default is 10 now. (default: 10).")
     parser.add_argument("--allow_install", type=bool, default=False,
                         help="allow pip install (default: False).")
+    parser.add_argument("--run_func",type=str,default="collab",help="valid entries: collab, gridsearch, knn. collab does collaborative filtering for non-knn. knn will go and remove % of the users that dont meet number of review threshold. gridseach looks for svd's RMSE and MAE")
 
     return parser.parse_args()
   
@@ -68,12 +69,12 @@ def run_normal(results, errordict, data, cv=3, verbose=True,n_jobs=-1):
   results['Random_baseline'] = scores
   return results
 
-def run_knn_user(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
+def run_knn_user(results, errordict, data, rank, cv=3, verbose=True, n_jobs=-1, k=10):
   print(f"\nKNNBasic: user-based collab filter predictor, k = {k}")
   sim_options = {'name': 'cosine', 'user_based': True}
   algo = KNNBasic(k=k,verbose=verbose,sim_options=sim_options)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
-  results['User-based Collaborative Filtering'] = scores
+  results[rank]={'User-based Collaborative Filtering': scores}
   return results
 
 def run_knn_items(results, errordict, data, cv=3, verbose=True, n_jobs=-1, k=10):
@@ -99,14 +100,16 @@ def run_slopeOne(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
   return results
   
 def run_svd(results, errordict, data, cv=3, verbose=True, n_jobs=-1):
-  algo = SVD(random_state=42)
+  # from gridsearch:
+  #   best params RMSE: {'n_factors': 70, 'n_epochs': 20, 'reg_all': 0.1, 'biased': True, 'lr_all': 0.005}
+  #   best params MAE: {'n_factors': 70, 'n_epochs': 100, 'reg_all': 0.02, 'biased': True, 'lr_all': 0.001}
+  algo = SVD(n_factors=70,n_epochs=20,reg_all=0.1, biased=True, lr_all=0.005,random_state=42)
   scores = cross_validate(algo, data, measures=list(errordict.keys()), cv=cv, verbose=verbose,n_jobs=n_jobs)
   results['Funk Matrix Factorization'] = scores
   return results
   
-def gen_fig_results(results,errordict):
-
-  for errortype in list(errordict.keys(),cv):
+def gen_fig_results(results,errordict,cv,rank=""):
+  for errortype in list(errordict.keys()):
     tags = []
     scrs = []
     algo = []
@@ -126,11 +129,11 @@ def gen_fig_results(results,errordict):
     ax.set_ylim(int(min(minval)*10)/10.0,int(max(minval)*10+1)/10.0)
     ax.set_ylabel(errordict[errortype]['name'])
     ax.legend(title='Recommendation Algorithm')
-    fn = f"results_{errordict[errortype]['key']}_{cv}.png"
+    fn = f"results_{errordict[errortype]['key']}_{cv}_{rank}.png"
     plt.savefig(fn)
     print(f"results saved to {fn}")
 
-def setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit):
+def setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit,rank=None):
   # reader for surprise module
   reader = Reader(rating_scale=rating_scale)
   # figure out what dataset to use
@@ -139,14 +142,25 @@ def setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit):
       print("using explicit dataset")
       explicit_df = user_rating_df[user_rating_df['Book-Rating'] > 0]
       print("explicit min,max: ",explicit_df['Book-Rating'].min(),", ",explicit_df['Book-Rating'].max())
-      data = Dataset.load_from_df(explicit_df[['ISBN','User-ID','Book-Rating']],reader)
+
+      if rank is not None:
+        filter_df = explicit_df[explicit_df['User-ID'].isin(rank['userid_list'])]
+        data = Dataset.load_from_df(filter_df[['ISBN','User-ID','Book-Rating']],reader)
+        del explicit_df # only keep filter df
+      else:
+        data = Dataset.load_from_df(explicit_df[['ISBN','User-ID','Book-Rating']],reader)
       # clear up some memory
       del user_rating_df
     else:
       print("using implicit dataset")
       implicit_df = user_rating_df[user_rating_df['Book-Rating'] == 0]
       print("implicit min,max: ",implicit_df['Book-Rating'].min(),", ",implicit_df['Book-Rating'].max())
-      data = Dataset.load_from_df(implicit_df[['ISBN','User-ID','Book-Rating']],reader)
+      if rank is not None:
+        filter_df = implicit_df[implicit_df['User-ID'].isin(rank['userid_list'])]
+        data = Dataset.load_from_df(filter_df[['ISBN','User-ID','Book-Rating']],reader)
+        del implicit_df # only keep filter df
+      else:
+        data = Dataset.load_from_df(implicit_df[['ISBN','User-ID','Book-Rating']],reader)
       # clear up some memory
       del user_rating_df
   else:
@@ -174,9 +188,9 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
 
  
   results = run_normal(results, errordict, data, cv, verbose,n_jobs)
-
+  # do_knn instead
   # results = run_knn_user(results, errordict, data, cv, verbose, n_jobs, k)
-
+  # do_knn instead
   # results = run_knn_item(results, errordict, data, cv, verbose, n_jobs, k)
 
   results = run_nmf(results, errordict, data, cv, verbose,n_jobs)
@@ -186,6 +200,49 @@ def do_collaborative_filtering(ds = "arashnic/book-recommendation-dataset",
   results = run_svd(results, errordict, data, cv, verbose,n_jobs)
   
   gen_fig_results(results, errordict, cv)
+  
+def get_userid_from_ratingcount_quantiles(user_rating_counts, p = np.array((.0002, .0005, .0034, .023, .081,.12,.18,.22,.21,.14))):
+
+    review_counts_quantile = list(np.quantile(user_rating_counts,1-p))
+    print(f"{1-p} quantile of users' explicit rating counts {review_counts_quantile}")
+    rank_names = ['challenger','grand_master','master','diamond','emerald','platinum','gold','silver','bronze','iron']
+    rating = {}
+    for curr_p,num_reviews,name in zip(p,review_counts_quantile,rank_names):
+        a = user_rating_counts[user_rating_counts>=num_reviews]
+        users = a.index.tolist()
+         
+        rating[name]={"num_users":len(a),
+                     "userid_list":users,
+                     "num_review_thresh":num_reviews,
+                     "quantile":curr_p}
+        print(f"{name}: {len(a)} users have more than {num_reviews} reviews")
+        print(f"example user ids for {name} (top {curr_p*100}%  reviewers):",users[:3])
+    print(len(user_rating_counts), "total users")
+    return rating
+  
+def do_knn(ds = "arashnic/book-recommendation-dataset", 
+                               rating_scale = (1, 10),
+                               use_explicit=True,
+                               cv=3,
+                               verbose=True,
+                               n_jobs=-1,k=10):
+  # download dataset, load, merge data
+  user_rating_df = setup_dataset(ds)
+  print(f"using rating {rating_scale}")
+ 
+  user_rating_counts_exp = user_rating_df[user_rating_df['Book-Rating'] > 0].groupby("User-ID")['Book-Rating'].count()
+  rating = get_userid_from_ratingcount_quantiles(user_rating_counts_exp)
+  results = {}
+  errordict = {'RMSE':{'key':'test_rmse','name':'Root Mean Square Error'},
+               'MAE':{'key':'test_mae','name':'Mean Absolute Error'}}
+  for rank in rating.keys():
+      print()
+      print(f"grabbing explicit ratings of {rank} (top {rating[rank]['quantile']*100}%) users")
+      data,reader = setup_data_surprise(user_rating_df,rating_scale,ds,use_explicit,rating[rank])
+      results = run_knn_user(results, errordict, data, rank, cv, verbose, n_jobs, k)
+      # no time to find out why this doesnt work
+      # gen_fig_results(results, errordict, cv,rank)
+    
 
 def find_best(ds = "arashnic/book-recommendation-dataset", 
                                rating_scale = (1, 10),
@@ -223,7 +280,7 @@ def find_best(ds = "arashnic/book-recommendation-dataset",
   print(f'best params MAE: {gs.best_params["mae"]}')
 
 if __name__ == "__main__":
-  #example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10 --allow_install False
+  # example: python3 train.py --ds arashnic/book-recommendation-dataset --rating_scale 1 10 --use_explicit --cv 3 --verbose True --n_jobs -1 --k 10 --allow_install False
   args = parse_args()
   try:
       from surprise import NormalPredictor, KNNBasic, NMF, SlopeOne, SVD, Dataset, Reader
@@ -246,9 +303,16 @@ if __name__ == "__main__":
         import kagglehub
       else:
         raise ModuleNotFoundError(f"cannot find kagglehub, please pip install kagglehub or turn on allow install and rerun (currently: {allow_install})")
+  if args.run_func == "gridsearch":
+    print("find best")
+    find_best(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs)      
 
-  print("find best")
-  find_best(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs)      
-  
-  # print("do collaborative filtering")
-  # do_collaborative_filtering(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
+  elif args.run_func == "collab":
+    print("do collaborative filtering")
+    do_collaborative_filtering(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
+
+  elif args.run_func == "knn":
+    print("do knn based on user rating rankings")
+    do_knn(args.ds,args.rating_scale,args.use_explicit,args.cv,args.verbose,args.n_jobs,args.k)
+  else:
+    raise NotImplementedError(f"run_func: {args.run_func}. not a valid choice. please choose collab, knn, gridseach")
